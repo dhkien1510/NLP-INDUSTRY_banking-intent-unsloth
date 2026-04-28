@@ -8,6 +8,12 @@ import argparse
 import yaml
 import pandas as pd
 import torch
+import warnings
+import logging
+
+# Suppress bitsandbytes FutureWarning and other repetitive warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 # Try to load Unsloth, but fallback to standard transformers if no GPU is found
 try:

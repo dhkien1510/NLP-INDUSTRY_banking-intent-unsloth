@@ -15,6 +15,9 @@ from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template, train_on_responses_only
 from trl import SFTTrainer
 from transformers import TrainingArguments
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ============================================================
 # 2. Load configuration from YAML
