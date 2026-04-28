@@ -1,0 +1,7 @@
+# ============================================================
+# Inference Configuration
+# ============================================================
+
+checkpoint_path: "outputs/final_checkpoint"
+label_mapping_path: "sample_data/label_mapping.json"
+max_seq_length: 256

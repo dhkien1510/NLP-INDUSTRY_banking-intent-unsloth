@@ -1,0 +1,19 @@
+# Environments
+venv/
+.env
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
+
+# Model Checkpoints (Heavy files, do not push to GitHub)
+outputs/
+*.safetensors
+*.bin
+*.gguf
+
+# Caches
+unsloth_compiled_cache/
+huggingface_tokenizers_cache/

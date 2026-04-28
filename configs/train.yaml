@@ -1,0 +1,29 @@
+# ============================================================
+# Train Configuration — Unsloth Fine-tuning for Banking Intent
+# ============================================================
+
+model:
+  name: "unsloth/gemma-2-2b-it-bnb-4bit"
+  max_seq_length: 256
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+
+training:
+  batch_size: 8
+  gradient_accumulation: 4     # effective batch size = 8 * 4 = 32
+  epochs: 10                   # More epochs for completion-only training
+  learning_rate: 2e-4
+  optimizer: "adamw_8bit"
+  lr_scheduler: "cosine"
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+
+paths:
+  train_data: "sample_data/train.csv"
+  val_data: "sample_data/val.csv"
+  test_data: "sample_data/test.csv"
+  label_mapping: "sample_data/label_mapping.json"
+  output_dir: "outputs"
