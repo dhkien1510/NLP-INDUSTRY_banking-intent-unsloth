@@ -1,5 +1,8 @@
 # Banking Intent Classification with Unsloth Fine-tuning (PA02)
 
+## 🎥 Demo Video
+- **Video Link**: [Insert your Google Drive Video Link Here] *(Ensure the link is set to "Anyone with the link can view")*
+
 ## 1. Project Description
 This project fine-tunes the `gemma-2-2b-it` model to classify customer banking intents using the Unsloth framework. We extracted a subset of 30 core intents from the BANKING77 dataset. The data is split into Train (4158 samples), Validation (734 samples), and a perfectly balanced Test set of 1200 samples (exactly 40 samples per intent).
 

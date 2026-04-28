@@ -1,13 +1,24 @@
 """
-inference.py — Standalone inference script for the fine-tuned Banking Intent model using Unsloth.
+inference.py — Standalone inference script for the fine-tuned Banking Intent model.
+Supports both Unsloth (GPU) and standard Transformers (CPU Fallback).
 """
 
 import os
 import argparse
 import yaml
 import pandas as pd
-from unsloth import FastModel
-from unsloth.chat_templates import get_chat_template
+import torch
+
+# Try to load Unsloth, but fallback to standard transformers if no GPU is found
+try:
+    from unsloth import FastModel
+    from unsloth.chat_templates import get_chat_template
+    USE_UNSLOTH = True
+except (ImportError, NotImplementedError):
+    print("\n[WARNING] Unsloth requires a GPU, but none was found. Falling back to standard Transformers (CPU mode).")
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from peft import PeftModel
+    USE_UNSLOTH = False
 
 class IntentClassification:
     def __init__(self, model_path: str):
@@ -21,10 +32,7 @@ class IntentClassification:
         with open(model_path, "r") as f:
             self.config = yaml.safe_load(f)
             
-        # Get paths relative to the project root (assuming script runs from project root)
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
-        # Resolve checkpoint path from config
         rel_checkpoint_path = self.config.get("checkpoint_path", "outputs/final_checkpoint")
         self.checkpoint_dir = os.path.join(project_root, rel_checkpoint_path)
         
@@ -33,22 +41,41 @@ class IntentClassification:
 
         self.max_seq_length = self.config.get("max_seq_length", 256)
 
-        print(f"==== LOADING UNSLOTH MODEL FROM {self.checkpoint_dir} ====")
-        
-        # Load the model using Unsloth as required
-        self.model, self.tokenizer = FastModel.from_pretrained(
-            model_name=self.checkpoint_dir,
-            max_seq_length=self.max_seq_length,
-            load_in_4bit=True, # Unsloth 4-bit loading (Requires GPU)
-            dtype=None,
-        )
+        if USE_UNSLOTH:
+            print(f"==== LOADING UNSLOTH MODEL (GPU) ====")
+            self.model, self.tokenizer = FastModel.from_pretrained(
+                model_name=self.checkpoint_dir,
+                max_seq_length=self.max_seq_length,
+                load_in_4bit=True,
+                dtype=None,
+            )
+            self.tokenizer = get_chat_template(
+                self.tokenizer,
+                chat_template="gemma",
+            )
+            FastModel.for_inference(self.model)
+        else:
+            print(f"==== LOADING STANDARD TRANSFORMERS (CPU) ====")
+            import json
+            with open(os.path.join(self.checkpoint_dir, "adapter_config.json"), "r") as f:
+                adapter_config = json.load(f)
+            base_model_name = adapter_config.get("base_model_name_or_path", "unsloth/gemma-2-2b-it-bnb-4bit")
+            
+            self.tokenizer = AutoTokenizer.from_pretrained(self.checkpoint_dir)
+            try:
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    base_model_name,
+                    device_map="cpu",
+                    load_in_4bit=False,
+                    torch_dtype=torch.float32,
+                )
+            except Exception as e:
+                print("\n[ERROR] Failed to load base model on CPU. Make sure you have enough RAM.")
+                raise e
 
-        self.tokenizer = get_chat_template(
-            self.tokenizer,
-            chat_template="gemma",
-        )
-        
-        FastModel.for_inference(self.model)
+            self.model = PeftModel.from_pretrained(base_model, self.checkpoint_dir)
+            self.model.eval()
+
         print("==== MODEL READY ====")
 
     def __call__(self, message: str) -> str:
@@ -62,32 +89,37 @@ class IntentClassification:
             }
         ]
         
-        inputs = self.tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_tensors="pt",
-            return_dict=True,
-        ).to(self.model.device)
+        if USE_UNSLOTH:
+            inputs = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_tensors="pt",
+                return_dict=True,
+            ).to(self.model.device)
+        else:
+            chat_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            inputs = self.tokenizer(chat_text, return_tensors="pt").to(self.model.device)
 
-        outputs = self.model.generate(
-            **inputs,
-            max_new_tokens=48,
-            temperature=1.0,
-            top_p=1.0,
-            do_sample=False,
-            use_cache=True,
-        )
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=48,
+                temperature=1.0,
+                top_p=1.0,
+                do_sample=False,
+                use_cache=True,
+            )
 
-        # Extract only the newly generated tokens
         generated_ids = outputs[0, inputs["input_ids"].shape[1]:]
         raw_output = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         return raw_output.split("\n")[0].strip()
 
     def evaluate_test_set(self, test_csv_path: str):
-        """
-        Evaluates the model on a test CSV dataset and prints the classification report.
-        """
         if not os.path.exists(test_csv_path):
             print(f"Test data not found at {test_csv_path}")
             return
@@ -96,10 +128,7 @@ class IntentClassification:
         df_test = pd.read_csv(test_csv_path)
         df_test.dropna(subset=["text", "label_name"], inplace=True)
         
-        predictions = []
-        ground_truths = []
-        
-        # Optional: Add a progress counter
+        predictions, ground_truths = [], []
         total = len(df_test)
         for idx, row in df_test.iterrows():
             if idx % 50 == 0:
@@ -113,15 +142,11 @@ class IntentClassification:
         try:
             from sklearn.metrics import classification_report
             print("\n==== CLASSIFICATION REPORT ====")
-            report = classification_report(ground_truths, predictions, zero_division=0)
-            print(report)
+            print(classification_report(ground_truths, predictions, zero_division=0))
         except ImportError:
             print("Install scikit-learn to see the detailed classification report.")
 
 
-# ============================================================
-# Short usage example showing how the inference class is called
-# ============================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run inference on the fine-tuned intent model.")
     parser.add_argument("--config", type=str, default="configs/inference.yaml", help="Path to inference config YAML.")
@@ -132,31 +157,18 @@ if __name__ == "__main__":
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     config_abs_path = os.path.join(project_root, args.config)
     
-    # 1. Initialize the inference class using the config path (as requested by instruction)
     classifier = IntentClassification(model_path=config_abs_path)
     
-    # 2. Inference a single text input
     if args.query:
         print(f"\nInput Message: {args.query}")
-        predicted_label = classifier(message=args.query)
-        print(f"Predicted Label: {predicted_label}")
-        
-    # 3. Evaluate the test set
+        print(f"Predicted Label: {classifier(message=args.query)}")
     elif args.eval_test:
         test_path = os.path.join(project_root, "sample_data", "test.csv")
         classifier.evaluate_test_set(test_csv_path=test_path)
-        
-    # 4. Interactive mode (if no args provided)
     else:
         print("\n--- Interactive Inference Mode ---")
-        print("Example usage of the IntentClassification class.")
-        print("Type 'quit' to exit.")
         while True:
-            user_input = input("\nEnter banking message: ")
-            if user_input.lower() in ["quit", "exit"]:
-                break
+            user_input = input("\nEnter banking message (or 'quit'): ")
+            if user_input.lower() in ["quit", "exit"]: break
             if user_input.strip() == "": continue
-            
-            # Call the class instance directly
-            pred = classifier(user_input)
-            print(f"Predicted Label: {pred}")
+            print(f"Predicted Label: {classifier(user_input)}")

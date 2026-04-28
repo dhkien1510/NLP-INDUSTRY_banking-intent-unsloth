@@ -12,6 +12,7 @@ import json
 import pandas as pd
 from datasets import Dataset
 from unsloth import FastLanguageModel
+from unsloth.chat_templates import get_chat_template, train_on_responses_only
 from trl import SFTTrainer
 from transformers import TrainingArguments
 
@@ -62,10 +63,10 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     dtype=None,              # Auto-detect dtype
 )
 
-# IMPORTANT: Set pad_token if the tokenizer doesn't have one
-# Gemma uses <eos> as pad by default, but just in case:
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
+tokenizer = get_chat_template(
+    tokenizer,
+    chat_template="gemma",
+)
 
 print(f"Model loaded: {MODEL_NAME}")
 print(f"Vocab size: {len(tokenizer)}")
@@ -122,16 +123,27 @@ print(f"Num labels:    {label_mapping['num_labels']}")
 # This is the MOST IMPORTANT part — inference MUST use the
 # exact same template (without the response for generation)
 # ----------------------------------------------------------
-PROMPT_TEMPLATE = """### Instruction: Classify the banking intent of the following customer message. Respond with only the intent label.
-### Input: {text}
-### Response: {label}"""
 
 def format_prompt(row):
-    """Format a single row into the instruction prompt with EOS token."""
-    return PROMPT_TEMPLATE.format(
-        text=str(row["text"]),
-        label=str(row["label_name"]),
-    ) + tokenizer.eos_token   # <-- EOS token tells model when to STOP generating
+    """Format a single row into the instruction prompt using chat template."""
+    messages = [
+        {
+            "role": "user",
+            "content": f"Classify the banking intent of the following customer message. Respond with only the intent label.\n\nInput: {row['text']}"
+        },
+        {
+            "role": "assistant",
+            "content": str(row["label_name"])
+        }
+    ]
+    chat_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    
+    # Unsloth convention: Remove BOS if present, processor will add it
+    bos_token = tokenizer.bos_token
+    if chat_text.startswith(bos_token):
+        chat_text = chat_text.replace(bos_token, "", 1)
+        
+    return chat_text
 
 # Apply the template to create the "formatted_text" column
 df_train["formatted_text"] = df_train.apply(format_prompt, axis=1)
@@ -156,11 +168,6 @@ print(f"Dataset columns: {train_dataset.column_names}")
 # 6. Set up trainer (SFTTrainer from trl)
 # ============================================================
 print("\n==== SETTING UP TRAINER ====")
-
-# formatting_func: Unsloth calls this with a single example (dict).
-# Must always return a list of strings.
-def formatting_func(example):
-    return [example["formatted_text"]]
 
 training_args = TrainingArguments(
     output_dir=OUTPUT_DIR,
@@ -199,10 +206,17 @@ trainer = SFTTrainer(
     tokenizer=tokenizer,
     train_dataset=train_dataset,
     eval_dataset=val_dataset,
-    formatting_func=formatting_func,   # ← replaces dataset_text_field
+    dataset_text_field="formatted_text",
     args=training_args,
     max_seq_length=MAX_SEQ_LENGTH,
     packing=False,   # Set True to pack multiple short examples into one sequence
+)
+
+print("\n==== MASKING INSTRUCTIONS (COMPLETION-ONLY) ====")
+trainer = train_on_responses_only(
+    trainer,
+    instruction_part="<start_of_turn>user\n",
+    response_part="<start_of_turn>model\n",
 )
 
 
