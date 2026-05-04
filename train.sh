@@ -21,8 +21,8 @@ if [ "$ENV" == "local" ]; then
     
     # We use train_kaggle.py as the main robust script. 
     # If you have a specific local train.py, you can change this.
-    python "$PROJECT_ROOT/scripts/train_kaggle.py"
+    python "$PROJECT_ROOT/scripts/train.py"
 else
     echo "Running in CLOUD (Vast.ai / Kaggle) mode..."
-    python "$PROJECT_ROOT/scripts/train_kaggle.py"
+    python "$PROJECT_ROOT/scripts/train.py"
 fi
