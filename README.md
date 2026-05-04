@@ -115,7 +115,7 @@ You can start training using the provided shell script. It reads hyperparameter 
 ```bash
 bash train.sh
 # OR
-python scripts/train_kaggle.py
+python scripts/train.py
 ```
 *Note: The final LoRA checkpoint will be saved to `outputs/final_checkpoint`.*
 
