@@ -17,7 +17,7 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 # Try to load Unsloth, but fallback to standard transformers if no GPU is found
 try:
-    from unsloth import FastModel
+    from unsloth import FastLanguageModel
     from unsloth.chat_templates import get_chat_template
     USE_UNSLOTH = True
 except (ImportError, NotImplementedError):
@@ -49,7 +49,7 @@ class IntentClassification:
 
         if USE_UNSLOTH:
             print(f"==== LOADING UNSLOTH MODEL (GPU) ====")
-            self.model, self.tokenizer = FastModel.from_pretrained(
+            self.model, self.tokenizer = FastLanguageModel.from_pretrained(
                 model_name=self.checkpoint_dir,
                 max_seq_length=self.max_seq_length,
                 load_in_4bit=True,
@@ -59,7 +59,7 @@ class IntentClassification:
                 self.tokenizer,
                 chat_template="gemma",
             )
-            FastModel.for_inference(self.model)
+            FastLanguageModel.for_inference(self.model)
         else:
             print(f"==== LOADING STANDARD TRANSFORMERS (CPU) ====")
             import json
